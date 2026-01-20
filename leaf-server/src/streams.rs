@@ -85,7 +85,27 @@ impl Streams {
         let data_dir = STORAGE.data_dir()?;
         let stream_dir = data_dir.join("streams").join(stream.id().as_str());
 
+        // Get the current module CID before switching
+        let old_module_cid = stream.module_cid().await;
+
+        // Set the new module
         stream.raw_set_module(module_cid).await?;
+
+        // Delete the old module database if it exists and is different from the new one
+        if let Some(old_cid) = old_module_cid {
+            if old_cid != module_cid {
+                let old_module_db_path = stream_dir.join(format!("module_{}.db", old_cid));
+                if old_module_db_path.exists() {
+                    tokio::fs::remove_file(&old_module_db_path).await?;
+                    // Also delete WAL and SHM files
+                    let wal_path = format!("{}-wal", old_module_db_path.display());
+                    let shm_path = format!("{}-shm", old_module_db_path.display());
+                    tokio::fs::remove_file(wal_path).await.ok();
+                    tokio::fs::remove_file(shm_path).await.ok();
+                }
+            }
+        }
+
         let (module, db) = load_module(&stream_dir, module_cid).await?;
         stream.provide_module(module, db).await?;
         STORAGE
